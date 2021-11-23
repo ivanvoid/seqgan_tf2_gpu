@@ -41,11 +41,18 @@ negative_file = 'data/generator_sample.txt'
 eval_file = 'data/eval_hittype.txt'
 generated_num = 4730 #10000 # same as train_data length
 
-log_file = open('logs/train.log', 'w')
+player_tr_file = 'data/real_players.txt'
+player_ts_file = 'data/eval_players.txt'
+
+log_path = 'logs/train.log'
+log_file = open(log_path, 'w')
+log_file.close()
 
 def log(value):
-    s = str(value) 
-    log_file.write(s)
+    s = str(value)
+    lf = open(log_path, 'a')
+    lf.write(s)
+    lf.close()
 
 
 def generate_samples(sess, trainable_model, batch_size, generated_num, output_file):
@@ -67,8 +74,8 @@ def target_loss(sess, target_lstm, data_loader):
     data_loader.reset_pointer()
 
     for it in range(data_loader.num_batch):
-        batch = data_loader.next_batch()
-        g_loss = sess.run(target_lstm.pretrain_loss, {target_lstm.x: batch})
+        batch1, batch2 = data_loader.next_batch()
+        g_loss = sess.run(target_lstm.pretrain_loss, {target_lstm.x: batch1})
         nll.append(g_loss)
 
     return np.mean(nll)
@@ -79,8 +86,11 @@ def gen_eval(sess, generator, eval_loader):
     eval_losses = []
 
     for it in range(eval_loader.num_batch):
-        batch = eval_loader.next_batch()
-        loss = sess.run(tf.stop_gradient(generator.pretrain_loss), {generator.x: batch})
+        batch1, batch2 = eval_loader.next_batch()
+        loss = sess.run(
+                tf.stop_gradient(generator.pretrain_loss), 
+                {generator.x: batch1, 
+                 generator.players: batch2})
         eval_losses.append(loss)
 
     return np.mean(eval_losses)
@@ -92,8 +102,8 @@ def pre_train_epoch(sess, trainable_model, data_loader):
     data_loader.reset_pointer()
 
     for it in range(data_loader.num_batch):
-        batch = data_loader.next_batch()
-        _, g_loss = trainable_model.pretrain_step(sess, batch)
+        batch1, batch2 = data_loader.next_batch()
+        _, g_loss = trainable_model.pretrain_step(sess, batch1, batch2)
         supervised_g_losses.append(g_loss)
 
     return np.mean(supervised_g_losses)
@@ -107,8 +117,8 @@ def main():
     vocab_size = 13
     player_size = 31
     
-    gen_data_loader = Gen_Data_loader(BATCH_SIZE)
-    eval_loader = Gen_Data_loader(BATCH_SIZE)
+    gen_data_loader = Gen_Data_loader(BATCH_SIZE, SEQ_LENGTH)
+    eval_loader = Gen_Data_loader(BATCH_SIZE, SEQ_LENGTH)
     #likelihood_data_loader = Gen_Data_loader(BATCH_SIZE) # For testing
     dis_data_loader = Dis_dataloader(BATCH_SIZE)
 
@@ -126,8 +136,8 @@ def main():
 
     # First, use the oracle model to provide the positive examples, which are sampled from the oracle data distribution
     #generate_samples(sess, target_lstm, BATCH_SIZE, generated_num, positive_file)
-    gen_data_loader.create_batches(positive_file)
-    eval_loader.create_batches(eval_file)
+    gen_data_loader.create_batches(positive_file, player_tr_file)
+    eval_loader.create_batches(eval_file, player_ts_file)
 
     #  pre-train generator
     print('Start pre-training...')
@@ -174,7 +184,9 @@ def main():
         for it in range(1):
             samples = generator.generate(sess)
             rewards = rollout.get_reward(sess, samples, 16, discriminator)
-            feed = {generator.x: samples, generator.rewards: rewards}
+            feed = {generator.x: samples, 
+                    generator.players:
+                    generator.rewards: rewards}
             _ = sess.run(generator.g_updates, feed_dict=feed)
 
         # Test

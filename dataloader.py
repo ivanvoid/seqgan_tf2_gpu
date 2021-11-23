@@ -1,30 +1,46 @@
 import numpy as np
 
-
 class Gen_Data_loader():
-    def __init__(self, batch_size):
+    def __init__(self, batch_size, max_seq_len):
         self.batch_size = batch_size
+        self.max_seq_len = max_seq_len
         self.token_stream = []
 
-    def create_batches(self, data_file):
-        self.token_stream = []
-        with open(data_file, 'r') as f:
+    def create_batches(self, data_file, player_file):
+        self.token_stream = self.load_data(data_file)
+        self.player_stream= self.load_data(player_file)
+        
+        # comute number of batches
+        self.num_batch = int(len(self.token_stream) / self.batch_size)
+        
+        # drop last samples
+        self.token_stream = self.token_stream[:self.num_batch * self.batch_size]
+        self.player_stream= self.player_stream[:self.num_batch* self.batch_size]
+
+        # Split data
+        self.sequence_batch = np.split(
+                np.array(self.token_stream), self.num_batch, 0)
+        self.player_batch = np.split(
+                np.array(self.player_stream), self.num_batch, 0)
+        
+        self.pointer = 0
+
+    def load_data(self, filename):
+        data_stream = []
+        with open(filename, 'r') as f:
             for line in f:
                 line = line.strip()
                 line = line.split()
                 parse_line = [int(x) for x in line]
-                if len(parse_line) == 20:
-                    self.token_stream.append(parse_line)
-
-        self.num_batch = int(len(self.token_stream) / self.batch_size)
-        self.token_stream = self.token_stream[:self.num_batch * self.batch_size]
-        self.sequence_batch = np.split(np.array(self.token_stream), self.num_batch, 0)
-        self.pointer = 0
+                if len(parse_line) == self.max_seq_len:
+                    data_stream.append(parse_line)
+        return data_stream
 
     def next_batch(self):
-        ret = self.sequence_batch[self.pointer]
+        ret1 = self.sequence_batch[self.pointer]
+        ret2 = self.player_batch[self.pointer]
         self.pointer = (self.pointer + 1) % self.num_batch
-        return ret
+        return ret1, ret2
 
     def reset_pointer(self):
         self.pointer = 0
