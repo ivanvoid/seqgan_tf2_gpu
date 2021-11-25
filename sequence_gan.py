@@ -12,19 +12,25 @@ from tqdm import tqdm
 tf.compat.v1.disable_eager_execution()
 
 ###################################################################################
-#  Generator  Hyper-parameters
+#  Data parameters
+##################################################################################
+vocab_size = 13
+player_size = 31
+
 ###################################################################################
+#  Generator  Hyper-parameters
+##################################################################################
 EMB_DIM = 32 # embedding dimension
 HIDDEN_DIM = 32 # hidden state dimension of lstm cell
 SEQ_LENGTH = 20 # sequence length
 START_TOKEN = 0
-PRE_EPOCH_NUM = 50 # supervise (maximum likelihood estimation) epochs
+PRE_EPOCH_NUM = 200 # supervise (maximum likelihood estimation) epochs
 SEED = 88
 BATCH_SIZE = 64
 
 ###################################################################################
 #  Discriminator  Hyper-parameters
-###################################################################################
+##################################################################################
 dis_embedding_dim = 64
 dis_filter_sizes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20]
 dis_num_filters = [100, 200, 200, 200, 200, 100, 100, 100, 100, 100, 160, 160]
@@ -34,19 +40,26 @@ dis_batch_size = 64
 
 ###################################################################################
 #  Basic Training Parameters
-###################################################################################
+##################################################################################
 TOTAL_BATCH = 200
 positive_file = 'data/real_hittype.txt'
 negative_file = 'data/generator_sample.txt'
 eval_file = 'data/eval_hittype.txt'
 generated_num = 4730 #10000 # same as train_data length
 
-player_tr_file = 'data/real_players.txt'
-player_ts_file = 'data/eval_players.txt'
+playerA_tr_file = 'data/playerA.train'
+playerB_tr_file = 'data/playerB.train'
+playerA_ev_file = 'data/playerA.eval'
+playerB_ev_file = 'data/playerB.eval'
 
 log_path = 'logs/train.log'
-log_file = open(log_path, 'w')
-log_file.close()
+
+def clear_file(fn):
+    log_file = open(fn, 'w')
+    log_file.close()
+
+clear_file(log_path)
+clear_file(negative_file)
 
 def log(value):
     s = str(value)
@@ -54,12 +67,18 @@ def log(value):
     lf.write(s)
     lf.close()
 
+def gen_rand_batch_players():
+    return np.random.randint(1,player_size, size=BATCH_SIZE
+            ).reshape(-1,1).repeat(SEQ_LENGTH, 1)
 
 def generate_samples(sess, trainable_model, batch_size, generated_num, output_file):
     # Generate Samples
     generated_samples = []
     for _ in range(int(generated_num / batch_size)):
-        generated_samples.extend(trainable_model.generate(sess))
+        playerA = gen_rand_batch_players()
+        playerB = gen_rand_batch_players()
+        samples = trainable_model.generate(sess, playerA, playerB)
+        generated_samples.extend(samples)
 
     with open(output_file, 'w') as fout:
         for poem in generated_samples:
@@ -67,33 +86,35 @@ def generate_samples(sess, trainable_model, batch_size, generated_num, output_fi
             fout.write(buffer)
 
 
-def target_loss(sess, target_lstm, data_loader):
-    # target_loss means the oracle negative log-likelihood tested with the oracle model "target_lstm"
-    # For more details, please see the Section 4 in https://arxiv.org/abs/1609.05473
-    nll = []
-    data_loader.reset_pointer()
-
-    for it in range(data_loader.num_batch):
-        batch1, batch2 = data_loader.next_batch()
-        g_loss = sess.run(target_lstm.pretrain_loss, {target_lstm.x: batch1})
-        nll.append(g_loss)
-
-    return np.mean(nll)
+#def target_loss(sess, target_lstm, data_loader):
+#    # target_loss means the oracle negative log-likelihood tested with the oracle model "target_lstm"
+#    # For more details, please see the Section 4 in https://arxiv.org/abs/1609.05473
+#    nll = []
+#    data_loader.reset_pointer()
+#
+#    for it in range(data_loader.num_batch):
+#        b1, b2, b3 = data_loader.next_batch()
+#        g_loss = sess.run(target_lstm.pretrain_loss, {target_lstm.x: b1})
+#        nll.append(g_loss)
+#
+#    return np.mean(nll)
 
 
 def gen_eval(sess, generator, eval_loader):
     eval_loader.reset_pointer()
+    pred_losses = []
     eval_losses = []
 
     for it in range(eval_loader.num_batch):
-        batch1, batch2 = eval_loader.next_batch()
+        b1, b2, b3 = eval_loader.next_batch()
         loss = sess.run(
-                tf.stop_gradient(generator.pretrain_loss), 
-                {generator.x: batch1, 
-                 generator.players: batch2})
-        eval_losses.append(loss)
+                tf.stop_gradient(generator.pretrain_loss),
+                {generator.x: b1, 
+                 generator.playerA: b2,
+                 generator.playerB: b3})
+        pred_losses.append(loss)
 
-    return np.mean(eval_losses)
+    return np.mean(pred_losses)
 
 
 def pre_train_epoch(sess, trainable_model, data_loader):
@@ -102,8 +123,8 @@ def pre_train_epoch(sess, trainable_model, data_loader):
     data_loader.reset_pointer()
 
     for it in range(data_loader.num_batch):
-        batch1, batch2 = data_loader.next_batch()
-        _, g_loss = trainable_model.pretrain_step(sess, batch1, batch2)
+        b1, b2, b3 = data_loader.next_batch()
+        _, g_loss = trainable_model.pretrain_step(sess, b1, b2, b3)
         supervised_g_losses.append(g_loss)
 
     return np.mean(supervised_g_losses)
@@ -114,8 +135,6 @@ def main():
     np.random.seed(SEED)
     assert START_TOKEN == 0
 
-    vocab_size = 13
-    player_size = 31
     
     gen_data_loader = Gen_Data_loader(BATCH_SIZE, SEQ_LENGTH)
     eval_loader = Gen_Data_loader(BATCH_SIZE, SEQ_LENGTH)
@@ -136,8 +155,9 @@ def main():
 
     # First, use the oracle model to provide the positive examples, which are sampled from the oracle data distribution
     #generate_samples(sess, target_lstm, BATCH_SIZE, generated_num, positive_file)
-    gen_data_loader.create_batches(positive_file, player_tr_file)
-    eval_loader.create_batches(eval_file, player_ts_file)
+    gen_data_loader.create_batches(
+            positive_file, playerA_tr_file, playerB_tr_file)
+    eval_loader.create_batches(eval_file, playerA_ev_file, playerB_ev_file)
 
     #  pre-train generator
     print('Start pre-training...')
@@ -155,13 +175,15 @@ def main():
             print('pre-train epoch ', epoch, 'test_loss ', test_loss)
             buffer = 'epoch:\t'+ str(epoch) + '\tnll:\t' + str(test_loss) + '\n'
             log(buffer)
-
-
+    exit(0)
     print('Start pre-training discriminator...')
     # Train 3 epoch on the generated data and do this for 50 times
-    for _ in tqdm(range(50)):
+    pbar = tqdm(range(50))
+    for _ in pbar:
         generate_samples(sess, generator, BATCH_SIZE, generated_num, negative_file)
         dis_data_loader.load_train_data(positive_file, negative_file)
+
+        all_d_loss = []
         for _ in range(3):
             dis_data_loader.reset_pointer()
             for it in range(dis_data_loader.num_batch):
@@ -171,21 +193,28 @@ def main():
                     discriminator.input_y: y_batch,
                     discriminator.dropout_keep_prob: dis_dropout_keep_prob
                 }
-                _ = sess.run(discriminator.train_op, feed)
-
+                _, loss = sess.run(
+                        [discriminator.train_op, discriminator.loss], 
+                        feed)
+                all_d_loss.append(loss)
+        desc = 'Avg D loss: {:.4f}'.format(np.mean(loss))
+        pbar.set_description(desc=desc)
 
     rollout = ROLLOUT(generator, 0.8)
 
-    print('######################################################################')
+    print('#####################################################################')
     print('Start Adversarial Training...')
     log('adversarial training...\n')
     for total_batch in range(TOTAL_BATCH):
         # Train the generator for one step
         for it in range(1):
-            samples = generator.generate(sess)
+            playerA = gen_rand_batch_players()
+            playerB = gen_rand_batch_players()
+            samples = generator.generate(sess, playerA, playerB)
             rewards = rollout.get_reward(sess, samples, 16, discriminator)
             feed = {generator.x: samples, 
-                    generator.players:
+                    generator.playerA: playerA,
+                    generator.playerB: playerB,
                     generator.rewards: rewards}
             _ = sess.run(generator.g_updates, feed_dict=feed)
 
@@ -203,6 +232,7 @@ def main():
         rollout.update_params()
 
         # Train the discriminator
+        all_d_loss = []
         for _ in range(5):
             generate_samples(sess, generator, BATCH_SIZE, generated_num, negative_file)
             dis_data_loader.load_train_data(positive_file, negative_file)
@@ -216,7 +246,12 @@ def main():
                         discriminator.input_y: y_batch,
                         discriminator.dropout_keep_prob: dis_dropout_keep_prob
                     }
-                    _ = sess.run(discriminator.train_op, feed)
+                    _, loss = sess.run(
+                            [discriminator.train_op, discriminator.loss], 
+                            feed)
+
+                    all_d_loss.append(loss)
+        print('Avg D loss: {:.4f}'.format(np.mean(loss)))
 
     log_file.close()
 

@@ -6,22 +6,26 @@ class Gen_Data_loader():
         self.max_seq_len = max_seq_len
         self.token_stream = []
 
-    def create_batches(self, data_file, player_file):
+    def create_batches(self, data_file, playerA_file, playerB_file):
         self.token_stream = self.load_data(data_file)
-        self.player_stream= self.load_data(player_file)
-        
+        self.playerA_stream= self.load_data(playerA_file)   
+        self.playerB_stream= self.load_data(playerB_file)
+
         # comute number of batches
         self.num_batch = int(len(self.token_stream) / self.batch_size)
         
         # drop last samples
         self.token_stream = self.token_stream[:self.num_batch * self.batch_size]
-        self.player_stream= self.player_stream[:self.num_batch* self.batch_size]
+        self.playerA_stream= self.playerA_stream[:self.num_batch* self.batch_size]
+        self.playerB_stream= self.playerB_stream[:self.num_batch* self.batch_size]
 
         # Split data
         self.sequence_batch = np.split(
                 np.array(self.token_stream), self.num_batch, 0)
-        self.player_batch = np.split(
-                np.array(self.player_stream), self.num_batch, 0)
+        self.playerA_batch = np.split(
+                np.array(self.playerA_stream), self.num_batch, 0)
+        self.playerB_batch = np.split(
+                np.array(self.playerB_stream), self.num_batch, 0)
         
         self.pointer = 0
 
@@ -38,9 +42,10 @@ class Gen_Data_loader():
 
     def next_batch(self):
         ret1 = self.sequence_batch[self.pointer]
-        ret2 = self.player_batch[self.pointer]
+        ret2 = self.playerA_batch[self.pointer]
+        ret3 = self.playerB_batch[self.pointer]
         self.pointer = (self.pointer + 1) % self.num_batch
-        return ret1, ret2
+        return ret1, ret2, ret3
 
     def reset_pointer(self):
         self.pointer = 0
